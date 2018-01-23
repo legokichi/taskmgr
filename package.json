@@ -1,0 +1,21 @@
+{
+  "name": "taskmgr",
+  "version": "0.0.0",
+  "description": "",
+  "main": "lib/index.js",
+  "scripts": {
+    "tsc": "tsc",
+    "start": "npm run tsc && node lib/index.js"
+  },
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^2.13.0",
+    "deep-diff": "^0.3.8"
+  },
+  "devDependencies": {
+    "@types/deep-diff": "0.0.31",
+    "@types/node": "^8.0.30",
+    "typescript": "^2.5.2"
+  }
+}
