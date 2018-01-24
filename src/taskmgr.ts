@@ -9,7 +9,7 @@ export function sleep(ms: number){ return new Promise((resolve)=> setTimeout(res
 
 export function spawn(command: string, opt: child_process.SpawnOptions): {process: child_process.ChildProcess, promise: Promise<{code: number, signal: string}>} {
   console.log("spawn", command, opt);
-  const child = child_process.spawn("bash", ["-c", command], {detached: true, ...opt});
+  const child = child_process.spawn("bash", ["-c", command], {detached: true, stdio: 'inherit', ...opt});
   const sigint = ()=>{ process.kill(-child.pid); };
   process.on('SIGINT', sigint);
   const finalize = ()=>{ process.removeListener('SIGINT', sigint); };
@@ -116,7 +116,8 @@ export class IO{
     const diff = deep_diff.diff(out_list, in_list);
     //console.log(util.inspect({diff}, true, 10));
     const new_mp4_files = diff.filter((a)=> a.kind === "N" && a.rhs === false && in_list[a.path[0]] != null && /\.mp4$/.test(a.path[0] || "")).map((a)=> a.path[0]);
-    console.log(util.inspect({new_mp4_files}, true, 10));
+    //console.log(util.inspect({new_mp4_files}, true, 10));
+    console.log("new_mp4_files", new_mp4_files.length);
     this.queuing = new_mp4_files
       .filter((somepath)=> this.ignored[somepath] == null)
       .filter((somepath)=> !this.processing.has(somepath));
@@ -132,7 +133,7 @@ export class IO{
     const output_path = path.join(this.output_dir, processing_file);
     return new Promise<void>((resolve, reject)=>{
       const commit = async (workdir: string)=>{
-        const child = spawn(`mkdir -p ${output_path} && mv ${path.join(workdir, "*")} ${output_path}`, {stdio: ['inherit', 'inherit', 'inherit']});
+        const child = spawn(`mkdir -p ${output_path} && mv ${path.join(workdir, "*")} ${output_path}`, {});
         const {code, signal} = await child.promise;
         if(code !== 0){ return ignore(`return code is ${code}`); }
         console.log("commit", processing_file);
