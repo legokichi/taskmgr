@@ -4,6 +4,17 @@ import child_process = require('child_process');
 import deep_diff = require("deep-diff");
 import util = require("util")
 
+export function checkEnv(key: string, defaultVal?: string): string {
+  const val = process.env[key];
+  if(typeof val !== "string"){
+    if(typeof defaultVal === "string"){
+      console.warn(`process.env.${key} := ${defaultVal}`);
+      return defaultVal;
+    }
+    throw new Error(`process.env.${key} is not defined`);
+  }
+  return val;
+}
 
 export function sleep(ms: number){ return new Promise((resolve)=> setTimeout(resolve, ms) ); }
 
@@ -100,10 +111,15 @@ export class IO{
     this.ignored = {};
   }
   async load(){
-    const text = await new Promise<string>((r,l)=> fs.readFile(this.savefile, "utf8", (err, val)=> err ? l(err) : r(val)) );
-    const o = JSON.parse(text);
-    this.processed = new Set(o.processed);
-    this.ignored = o.ignored;
+    try{
+      const text = await new Promise<string>((r,l)=> fs.readFile(this.savefile, "utf8", (err, val)=> err ? l(err) : r(val)) );
+      const o = JSON.parse(text);
+      this.processed = new Set(o.processed);
+      this.ignored = o.ignored;
+    }catch(err){
+      console.log("create save file");
+      await this.save();
+    }
   }
   async fetch(){
     const [in_tree, out_tree] = await Promise.all([
@@ -125,31 +141,27 @@ export class IO{
   empty(): boolean {
     return this.queuing.length === 0;
   }
-  run(fn: (filepath: string)=> Promise<string> ){
+  async run(gpuId: number, workdir: string, bash_script_file: string): Promise<number> {
+    const initialize = await spawn(`rm -rf "${workdir}" && mkdir -p "${workdir}"`, {}).promise;
+    if(initialize.code !== 0){ throw new Error("initialize failed "+initialize.code); }
     const nullable = this.queuing.pop();
     if(typeof nullable !== "string"){ throw new Error("queue is empty"); }
     const processing_file = nullable;
     const input_file = path.join(this.input_dir, processing_file);
     const output_path = path.join(this.output_dir, processing_file);
-    return new Promise<void>((resolve, reject)=>{
-      const commit = async (workdir: string)=>{
-        const child = spawn(`mkdir -p ${output_path} && mv ${path.join(workdir, "*")} ${output_path}`, {});
-        const {code, signal} = await child.promise;
-        if(code !== 0){ return ignore(`return code is ${code}`); }
-        console.log("commit", processing_file);
-        this.processing.delete(processing_file);
-        this.processed.add(processing_file);
-        resolve();
-      };
-      const ignore = async (reason: string)=>{
-        console.log("ignore", processing_file, reason);
-        this.ignored[processing_file] = [Date.now(), reason];
-        reject(reason);
-      };
-      return fn(input_file)
-        .then((workdir)=> commit(workdir) )
-        .catch((err)=> ignore(util.inspect(err, true, 10)) );
-    });
+    const log_file = path.join(workdir, path.basename(bash_script_file)+".log");
+    const bash = await spawn(`bash -uvix "${bash_script_file}" "${gpuId}" "${processing_file}" "${workdir}" 2>&1 | tee "${log_file}" `, {}).promise;
+    if(bash.code !== 0){
+      console.log("ignore", processing_file, log_file);
+      this.ignored[processing_file] = [Date.now(), log_file];
+      return bash.code;
+    }
+    const finalize = await spawn(`mkdir -p "${output_path}" && mv "${path.join(workdir, "*")}" "${output_path}"`, {}).promise;
+    if(finalize.code !== 0){ throw new Error("finalize failed "+finalize.code); }
+    console.log("commit", processing_file);
+    this.processing.delete(processing_file);
+    this.processed.add(processing_file);
+    return bash.code;
   }
   async save(){
     const text = JSON.stringify({
