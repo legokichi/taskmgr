@@ -5,7 +5,7 @@
   "main": "lib/index.js",
   "scripts": {
     "tsc": "tsc",
-    "start": "npm run tsc && node lib/index.js"
+    "start": "npm run tsc && node --max-old-space-size=10240 lib/index.js"
   },
   "private": true,
   "license": "MIT",

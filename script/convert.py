@@ -9,6 +9,7 @@ def main(args):
     i=0
     while True:
         filename = os.path.join(args.input_dir, str(i)+"_keypoints.json")
+        print(filename)
         if not os.path.exists(filename):
             break
         print(i, filename)

@@ -62,13 +62,13 @@ export namespace FS {
   }
 
   export type DirTree = {name: string, stat: fs.Stats, children: DirTree[] };
-  export async function tree(pathname: string): Promise<DirTree[]> {
+  export async function tree(pathname: string, maxDepth=Infinity): Promise<DirTree[]> {
     const parent = await new Promise<FileInfo>((r, l)=> fs.lstat(pathname, (err, val)=> err ? l(err) : r({name: pathname, stat: val}) ) );
     const children = await ls(parent);
     return Promise.all(children.map((info)=> tree2(info.name, pathname)));
-    async function tree2(pathname: string, prefix=""): Promise<DirTree> {
+    async function tree2(pathname: string, prefix="", depth=0): Promise<DirTree> {
       const parent = await new Promise<FileInfo>((r, l)=> fs.lstat(path.join(prefix, pathname), (err, val)=> err ? l(err) : r({name: pathname, stat: val}) ) );
-      const children = await Promise.all((await ls(parent, prefix)).map((info)=> tree2(path.join(pathname, info.name), prefix)));
+      const children = depth >= maxDepth ? [] : await Promise.all((await ls(parent, prefix)).map((info)=> tree2(path.join(pathname, info.name), prefix, depth+1)));
       return {children, ...parent};
     }
   }
@@ -112,6 +112,7 @@ export class IO{
   }
   async load(){
     try{
+      console.log("loading");
       const text = await new Promise<string>((r,l)=> fs.readFile(this.savefile, "utf8", (err, val)=> err ? l(err) : r(val)) );
       const o = JSON.parse(text);
       this.processed = new Set(o.processed);
@@ -120,11 +121,17 @@ export class IO{
       console.log("create save file");
       await this.save();
     }
+    console.log("loaded");
   }
   async fetch(){
     const [in_tree, out_tree] = await Promise.all([
       FS.tree(this.input_dir),
-      FS.tree(this.output_dir)
+      FS.tree(this.output_dir, 2)
+    ]);
+    await Promise.all([
+      new Promise<void>((r,l)=> fs.writeFile("/home/dgxuser/yosuke/Github/ScorerManagementConsole/public/in.json", JSON.stringify(in_tree.map((a)=>FS.simplify(a))), (err)=> err ? l(err) : r())),
+      new Promise<void>((r,l)=> fs.writeFile("/home/dgxuser/yosuke/Github/ScorerManagementConsole/public/out.json", JSON.stringify(out_tree.map((a)=>FS.simplify(a))), (err)=> err ? l(err) : r())),
+      new Promise<void>((r,l)=> fs.writeFile("/home/dgxuser/yosuke/Github/ScorerManagementConsole/public/processing.json", JSON.stringify([...this.processing]), (err)=> err ? l(err) : r()))
     ]);
     const [in_list, out_list] = [in_tree, out_tree].map((lst)=> lst.reduce((o, a)=> Object.assign(o, FS.listify(a)), {}));
     //console.log(util.inspect({in_list}, true, 10));
@@ -144,19 +151,20 @@ export class IO{
   async run(gpuId: number, workdir: string, bash_script_file: string): Promise<number> {
     const initialize = await spawn(`rm -rf "${workdir}" && mkdir -p "${workdir}"`, {}).promise;
     if(initialize.code !== 0){ throw new Error("initialize failed "+initialize.code); }
-    const nullable = this.queuing.pop();
+    const nullable = this.queuing.shift();
     if(typeof nullable !== "string"){ throw new Error("queue is empty"); }
     const processing_file = nullable;
     const input_file = path.join(this.input_dir, processing_file);
     const output_path = path.join(this.output_dir, processing_file);
     const log_file = path.join(workdir, path.basename(bash_script_file)+".log");
-    const bash = await spawn(`bash -uvix "${bash_script_file}" "${gpuId}" "${processing_file}" "${workdir}" 2>&1 | tee "${log_file}" `, {}).promise;
+    this.processing.add(processing_file);
+    const bash = await spawn(`bash -euvx "${bash_script_file}" "${gpuId}" "${input_file}" "${workdir}" 2>&1 | tee "${log_file}"`, { stdio: ["inherit", "ignore", "ignore"] }).promise;
     if(bash.code !== 0){
       console.log("ignore", processing_file, log_file);
       this.ignored[processing_file] = [Date.now(), log_file];
       return bash.code;
     }
-    const finalize = await spawn(`mkdir -p "${output_path}" && mv "${path.join(workdir, "*")}" "${output_path}"`, {}).promise;
+    const finalize = await spawn(`mkdir -p "${output_path}" && cd "${workdir}" && cp -r ./* "${output_path}" && rm -rf ./*`, {}).promise;
     if(finalize.code !== 0){ throw new Error("finalize failed "+finalize.code); }
     console.log("commit", processing_file);
     this.processing.delete(processing_file);
@@ -168,6 +176,7 @@ export class IO{
       processed: [...this.processed],
       ignored: this.ignored
     });
+    //console.log(this.savefile, text);
     await new Promise<void>((r,l)=> fs.writeFile(this.savefile, text, (err)=> err ? l(err) : r()));
   }
 }

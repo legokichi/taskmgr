@@ -10,8 +10,11 @@ export async function main(){
   const DATA_DIR = checkEnv("DATA_DIR", path.join(__dirname, "../data/"));
   const SAVE_FILE = path.join(DATA_DIR, "save.json");
   const io = new IO(SAVE_FILE, INPUT_DIR, OUTPUT_DIR);
+  await io.load();
+  console.log("fetching");
   await io.fetch();
-  const prms = [0,1].map((gpuId)=> (async ()=>{
+  console.log("fetched");
+  const prms = [0,1,2,3,4,5,6,7].map((gpuId)=> (async ()=>{
     const workdir = path.join(DATA_DIR, `workdir_${gpuId}`);
     while(true){
       if(io.empty()){
