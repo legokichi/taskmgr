@@ -82,10 +82,10 @@ export namespace FS {
       return {name, isDirectory: false};
     }
   }
-  export function listify(tree: DirTree): {[path: string]: boolean} {
+  export function listify(tree: DirTree, filter:(a:DirTree,i:number)=>boolean=()=> true): {[path: string]: boolean} {
     const {name, stat, children} = tree;
     if(stat.isDirectory()){
-      return children.reduce<{[path: string]: boolean}>((o, a)=> Object.assign(o, listify(a)), {[name]: true});
+      return children.filter(filter).reduce<{[path: string]: boolean}>((o, a)=> Object.assign(o, listify(a)), {[name]: true});
     }else{
       return {[name]: false};
     }
@@ -94,28 +94,28 @@ export namespace FS {
 
 
 export class IO{
-  readonly savefile: string;
+  readonly savepath: string;
   readonly input_dir: string;
   readonly output_dir: string;
   queuing: Array<string>;
   processing: Set<string>;
-  processed: Set<string>;
+  processed: {[path:string]: [number, string]};
   ignored: {[path: string]:  [number, string]};
-  constructor(savefile: string, input_dir: string, output_dir: string){
-    this.savefile = savefile;
+  constructor(savepath: string, input_dir: string, output_dir: string){
+    this.savepath = savepath;
     this.input_dir = input_dir;
     this.output_dir = output_dir;
     this.queuing = [];
     this.processing = new Set();
-    this.processed = new Set();
+    this.processed = {};
     this.ignored = {};
   }
   async load(){
     try{
       console.log("loading");
-      const text = await new Promise<string>((r,l)=> fs.readFile(this.savefile, "utf8", (err, val)=> err ? l(err) : r(val)) );
+      const text = await new Promise<string>((r,l)=> fs.readFile(path.join(this.savepath, "save.json"), "utf8", (err, val)=> err ? l(err) : r(val)) );
       const o = JSON.parse(text);
-      this.processed = new Set(o.processed);
+      this.processed = o.processed;
       this.ignored = o.ignored;
     }catch(err){
       console.log("create save file");
@@ -129,11 +129,12 @@ export class IO{
       FS.tree(this.output_dir, 2)
     ]);
     await Promise.all([
-      new Promise<void>((r,l)=> fs.writeFile("/home/dgxuser/yosuke/Github/ScorerManagementConsole/public/in.json", JSON.stringify(in_tree.map((a)=>FS.simplify(a))), (err)=> err ? l(err) : r())),
-      new Promise<void>((r,l)=> fs.writeFile("/home/dgxuser/yosuke/Github/ScorerManagementConsole/public/out.json", JSON.stringify(out_tree.map((a)=>FS.simplify(a))), (err)=> err ? l(err) : r())),
-      new Promise<void>((r,l)=> fs.writeFile("/home/dgxuser/yosuke/Github/ScorerManagementConsole/public/processing.json", JSON.stringify([...this.processing]), (err)=> err ? l(err) : r()))
+      new Promise<void>((r,l)=> fs.writeFile(path.join(this.savepath, "in.json"), JSON.stringify(in_tree.map((a)=>FS.simplify(a))), (err)=> err ? l(err) : r())),
+      new Promise<void>((r,l)=> fs.writeFile(path.join(this.savepath, "out.json"), JSON.stringify(out_tree.map((a)=>FS.simplify(a))), (err)=> err ? l(err) : r())),
     ]);
-    const [in_list, out_list] = [in_tree, out_tree].map((lst)=> lst.reduce((o, a)=> Object.assign(o, FS.listify(a)), {}));
+    const in_list = in_tree.reduce<{[key:string]:boolean}>((o, a)=> Object.assign(o, FS.listify(a, (info)=> info.stat.mtime.getTime() > 1516926568743)), {});
+    const out_list = out_tree.reduce<{[key:string]:boolean}>((o, a)=> Object.assign(o, FS.listify(a)), {});
+
     //console.log(util.inspect({in_list}, true, 10));
     //console.log(util.inspect({out_list}, true, 10));
     const diff = deep_diff.diff(out_list, in_list);
@@ -168,15 +169,18 @@ export class IO{
     if(finalize.code !== 0){ throw new Error("finalize failed "+finalize.code); }
     console.log("commit", processing_file);
     this.processing.delete(processing_file);
-    this.processed.add(processing_file);
+    this.processed[processing_file] = [Date.now(), bash_script_file];
     return bash.code;
   }
   async save(){
     const text = JSON.stringify({
-      processed: [...this.processed],
+      processed: this.processed,
       ignored: this.ignored
     });
     //console.log(this.savefile, text);
-    await new Promise<void>((r,l)=> fs.writeFile(this.savefile, text, (err)=> err ? l(err) : r()));
+    await Promise.all([
+      new Promise<void>((r,l)=> fs.writeFile(path.join(this.savepath, "save.json"), text, (err)=> err ? l(err) : r())),
+      new Promise<void>((r,l)=> fs.writeFile(path.join(this.savepath, "processing.json"), JSON.stringify([...this.processing]), (err)=> err ? l(err) : r()))
+    ]);
   }
 }
