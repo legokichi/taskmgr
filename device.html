@@ -1,0 +1,69 @@
+<script src="https://unpkg.com/vue"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/es6-shim/0.35.3/es6-shim.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/es7-shim/6.0.0/es7-shim.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fetch/2.0.3/fetch.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/co/4.1.0/index.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/node-uuid/1.4.8/uuid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.19.3/moment.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/moment-timezone/0.5.14/moment-timezone.min.js"></script>
+<script>
+co(function*(){
+  const args = location.search.slice(1).split("&").map((a)=>a.split("=")).map(([a,b])=>[a,decodeURIComponent(b)]).reduce((o,[a,b])=> (o[a]=b,o),{});
+  const [input, output, processing, save] = yield Promise.all([
+    fetch("/in.json").then((res)=> res.json()),
+    fetch("/out.json").then((res)=> res.json()),
+    fetch("/processing.json").then((res)=> res.json()),
+    fetch("/save.json").then((res)=> res.json())
+  ]);
+  const outDic = output.reduce((o,device)=>{
+    if(!device.isDirectory){ return o; }
+    o[device.name] = device.children.reduce((o, movie)=> (o[movie.name.slice(device.name.length+1)]=movie.children, o), {});
+    return o;
+  }, {});
+  const data = {args, input, output, outDic, processing, save};
+  console.log(data);
+  const vm = new Vue({
+    data,
+    methods: { toJST(a){ return window.moment(new Date(a)).utcOffset("+0900").format(); }},
+    template: `<div>
+      <h1>processing</h1>
+      <ul>
+        <li v-for="movie in processing">openpose: {{movie}}</li>
+      </ul>
+      <h1>Recent</h1>
+      <ul>
+        <li v-for="file in Object.keys(save.processed).slice(0, 10)">
+          <time>{{toJST(save.processed[file][0]).split("T").join(" ")}}</time>: openpose: 
+          <span>{{file}}</span>
+        </li>
+      </ul>
+      <template v-for="device in input" v-if="device.name == args.deviceName">
+        <h1>{{device.name}}</h1>
+        <ul>
+          <li v-for="movie in device.children.slice().reverse()" v-if="!movie.isDirectory && movie.name.slice(-3)=='mp4'">
+            <template v-for="movieName in [movie.name.slice(device.name.length+1)]">
+              <a v-bind:href="'/downloadMov?mode=in&path='+encodeURIComponent(movie.name)">{{movieName}}</a>
+              <span v-if="outDic[device.name] != null && outDic[device.name][movieName] != null">[
+                openpose:
+                <a v-bind:href="'/downloadMov?mode=out&path='+encodeURIComponent(movie.name)">mp4</a>,
+                <a v-bind:href="'/downloadZip?path='+encodeURIComponent(movie.name)">log</a>
+              ]</span>
+              <span v-else>not processed yet</span>
+            </template>
+          </li>
+        </ul>
+      </template>
+      <h1>Devices</h1>
+      <ul>
+         <li v-for="device in input">
+           <span v-if="args.deviceName===device.name">{{device.name}}</span>
+           <a v-else v-bind:href="'/device.html?deviceName='+encodeURIComponent(device.name)">{{device.name}}</a>
+         </li>
+      </ul>
+    </div>`
+  });
+  const div = document.createElement("div");
+  document.body.appendChild(div);
+  vm.$mount(div);
+});
+</script>
